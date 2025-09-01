@@ -22,6 +22,10 @@ Parameters:
     Type: String
     Default: 10.0.4.0/24
     Description: CIDR block for private subnet 2
+  AL2AmiParameter:
+    Type: AWS::SSM::Parameter::Value<AWS::EC2::Image::Id>
+    Default: /aws/service/ami-amazon-linux-latest/amzn2-ami-hvm-x86_64-gp2
+    Description: SSM Parameter for latest Amazon Linux 2 AMI
 
 Resources:
   # VPC
@@ -141,7 +145,7 @@ Resources:
       SubnetId: !Ref PrivateSubnet2
       RouteTableId: !Ref PrivateRouteTable
 
-  # S3 VPC Endpoint (to avoid NAT Gateway)
+  # S3 VPC Endpoint
   S3Endpoint:
     Type: AWS::EC2::VPCEndpoint
     Properties:
@@ -225,7 +229,7 @@ Resources:
       LaunchTemplateName: AutoScalingLaunchTemplate
       LaunchTemplateData:
         InstanceType: t3.micro
-        ImageId: !Sub ami-0c55b159cbfafe1f0 # Amazon Linux 2 AMI for eu-central-1 (update if needed)
+        ImageId: !Ref AL2AmiParameter
         IamInstanceProfile:
           Arn: !GetAtt EC2InstanceProfile.Arn
         SecurityGroupIds:
