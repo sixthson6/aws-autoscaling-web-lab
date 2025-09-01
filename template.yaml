@@ -159,7 +159,7 @@ Resources:
         Statement:
           - Effect: Allow
             Principal: '*'
-            Action: s3:*
+            Action: 's3:*'
             Resource: '*'
 
   # Security Groups
@@ -225,6 +225,7 @@ Resources:
   # Launch Template
   LaunchTemplate:
     Type: AWS::EC2::LaunchTemplate
+    DependsOn: S3Endpoint
     Properties:
       LaunchTemplateName: AutoScalingLaunchTemplate
       LaunchTemplateData:
@@ -234,21 +235,75 @@ Resources:
           Arn: !GetAtt EC2InstanceProfile.Arn
         SecurityGroupIds:
           - !Ref EC2SecurityGroup
-        UserData: !Base64
-          Fn::Sub: |
+        UserData:
+          Fn::Base64: !Sub |
             #!/bin/bash
-            yum update -y
-            yum install -y httpd python3
-            systemctl start httpd
-            systemctl enable httpd
+            # Initialize error log
+            echo "Starting User Data script" > /var/log/user-data-error.log
+
+            # Retry yum update and install up to 5 times
+            for i in {1..5}; do
+              yum update -y && yum install -y httpd python3 && break
+              echo "Attempt $i: yum failed" >> /var/log/user-data-error.log
+              sleep 10
+            done
+
+            # Check if yum succeeded
+            if [ $? -ne 0 ]; then
+              echo "Error: yum install failed after 5 attempts" >> /var/log/user-data-error.log
+              exit 1
+            fi
+
+            # Start and enable httpd
+            systemctl start httpd || { echo "Error: Failed to start httpd" >> /var/log/user-data-error.log; exit 1; }
+            systemctl enable httpd || { echo "Error: Failed to enable httpd" >> /var/log/user-data-error.log; exit 1; }
+
+            # Fetch instance metadata
             INSTANCE_ID=$(curl -s http://169.254.169.254/latest/meta-data/instance-id)
             IP_ADDRESS=$(curl -s http://169.254.169.254/latest/meta-data/local-ipv4)
+            if [ -z "$INSTANCE_ID" ] || [ -z "$IP_ADDRESS" ]; then
+              echo "Error: Failed to fetch instance metadata" >> /var/log/user-data-error.log
+              exit 1
+            fi
+
+            # Create index.html
             echo "<html><body><h1>Hello from $IP_ADDRESS / $INSTANCE_ID</h1><button onclick=\"fetch('/stress', {method: 'POST'}).then(() => alert('Stress test started!'))\">Stress CPU</button><script>function checkHealth() { fetch('/health').then(resp => console.log('Health OK')).catch(err => console.error('Health check failed')); } setInterval(checkHealth, 30000);</script></body></html>" > /var/www/html/index.html
+            if [ $? -ne 0 ]; then
+              echo "Error: Failed to create index.html" >> /var/log/user-data-error.log
+              exit 1
+            fi
+
+            # Create health endpoint
             echo "OK" > /var/www/html/health
+            if [ $? -ne 0 ]; then
+              echo "Error: Failed to create health endpoint" >> /var/log/user-data-error.log
+              exit 1
+            fi
+
+            # Create stress.py
             echo "#!/usr/bin/python3\nprint('Content-Type: text/plain\\n')\nimport time\nstart = time.time()\nwhile time.time() - start < 30:\n    pass" > /var/www/html/stress.py
+            if [ $? -ne 0 ]; then
+              echo "Error: Failed to create stress.py" >> /var/log/user-data-error.log
+              exit 1
+            fi
+
+            # Set permissions for stress.py
             chmod +x /var/www/html/stress.py
+            if [ $? -ne 0 ]; then
+              echo "Error: Failed to set permissions for stress.py" >> /var/log/user-data-error.log
+              exit 1
+            fi
+
+            # Configure Apache for CGI
             echo "<Directory /var/www/html>\nOptions +ExecCGI\nAddHandler cgi-script .py\n</Directory>" >> /etc/httpd/conf/httpd.conf
-            systemctl restart httpd
+            if [ $? -ne 0 ]; then
+              echo "Error: Failed to configure Apache CGI" >> /var/log/user-data-error.log
+              exit 1
+            fi
+
+            # Restart httpd
+            systemctl restart httpd || { echo "Error: Failed to restart httpd" >> /var/log/user-data-error.log; exit 1; }
+            echo "User Data script completed successfully" >> /var/log/user-data-error.log
 
   # Auto Scaling Group
   AutoScalingGroup:
