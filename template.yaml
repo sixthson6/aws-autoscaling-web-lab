@@ -229,7 +229,7 @@ Resources:
         SecurityGroupIds:
           - !Ref Ec2SecurityGroup
         UserData:
-          Fn::Base64: |
+          Fn::Base64: !Sub |
             #!/bin/bash
             # Update and install necessary packages
             yum update -y
